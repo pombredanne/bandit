@@ -9,9 +9,10 @@ venv*
 .testrepository
 build/*
 cover/*
-.coverage
-docs/build/*
+.coverage*
+doc/build/*
 ChangeLog
-docs/source/api
+doc/source/api
 .*.sw?
 AUTHORS
+releasenotes/build

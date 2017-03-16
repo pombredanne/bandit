@@ -18,23 +18,21 @@ import copy
 import logging
 import warnings
 
-import six
-
 from bandit.core import constants
 from bandit.core import context as b_context
 from bandit.core import utils
 
 warnings.formatwarning = utils.warnings_formatter
-logger = logging.getLogger(__name__)
+LOG = logging.getLogger(__name__)
 
 
-class BanditTester():
-    def __init__(self, config, testset, debug):
-        self.config = config
+class BanditTester(object):
+    def __init__(self, testset, debug, nosec_lines):
         self.results = []
         self.testset = testset
         self.last_result = None
         self.debug = debug
+        self.nosec_lines = nosec_lines
 
     def run_tests(self, raw_context, checktype):
         '''Runs all tests for a certain type of check, for example
@@ -44,6 +42,7 @@ class BanditTester():
 
         :param raw_context: Raw context dictionary
         :param checktype: The type of checks to run
+        :param nosec_lines: Lines which should be skipped because of nosec
         :return: a score based on the number and type of test results
         '''
 
@@ -53,37 +52,37 @@ class BanditTester():
         }
 
         tests = self.testset.get_tests(checktype)
-        for name, test in six.iteritems(tests):
+        for test in tests:
+            name = test.__name__
             # execute test with the an instance of the context class
             temp_context = copy.copy(raw_context)
             context = b_context.Context(temp_context)
             try:
-                if hasattr(test, '_takes_config'):
-                    # TODO(??): Possibly allow override from profile
-                    test_config = self.config.get_option(
-                        test._takes_config)
-                    if test_config is None:
-                        warnings.warn(
-                            '"{0}" has been skipped due to missing config '
-                            '"{1}".'.format(test.__name__, test._takes_config)
-                        )
-                        continue
-                    result = test(context, test_config)
+                if hasattr(test, '_config'):
+                    result = test(context, test._config)
                 else:
                     result = test(context)
 
                 # if we have a result, record it and update scores
-                if result is not None:
-                    result.fname = temp_context['filename']
-                    result.lineno = temp_context['lineno']
+                if (result is not None and
+                        result.lineno not in self.nosec_lines and
+                        temp_context['lineno'] not in self.nosec_lines):
+
+                    if isinstance(temp_context['filename'], bytes):
+                        result.fname = temp_context['filename'].decode('utf-8')
+                    else:
+                        result.fname = temp_context['filename']
+
+                    if result.lineno is None:
+                        result.lineno = temp_context['lineno']
                     result.linerange = temp_context['linerange']
-                    result.test = test.__name__
+                    result.test = name
+                    if result.test_id == "":
+                        result.test_id = test._test_id
 
                     self.results.append(result)
 
-                    logger.debug(
-                        "Issue identified by %s: %s", name, result
-                    )
+                    LOG.debug("Issue identified by %s: %s", name, result)
                     sev = constants.RANKING.index(result.severity)
                     val = constants.RANKING_VALUES[result.severity]
                     scores['SEVERITY'][sev] += val
@@ -95,10 +94,11 @@ class BanditTester():
                 self.report_error(name, context, e)
                 if self.debug:
                     raise
-        logger.debug("Returning scores: %s", scores)
+        LOG.debug("Returning scores: %s", scores)
         return scores
 
-    def report_error(self, test, context, error):
+    @staticmethod
+    def report_error(test, context, error):
         what = "Bandit internal error running: "
         what += "%s " % test
         what += "on file %s at line %i: " % (
@@ -108,4 +108,4 @@ class BanditTester():
         what += str(error)
         import traceback
         what += traceback.format_exc()
-        logger.error(what)
+        LOG.error(what)

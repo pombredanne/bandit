@@ -13,7 +13,6 @@
 #  under the License.
 
 import csv
-import os
 import tempfile
 
 import six
@@ -21,16 +20,16 @@ import testtools
 
 import bandit
 from bandit.core import config
-from bandit.core import manager
 from bandit.core import issue
+from bandit.core import manager
 from bandit.formatters import csv as b_csv
+
 
 class CsvFormatterTests(testtools.TestCase):
 
     def setUp(self):
         super(CsvFormatterTests, self).setUp()
-        cfg_file = os.path.join(os.getcwd(), 'bandit/config/bandit.yaml')
-        conf = config.BanditConfig(cfg_file)
+        conf = config.BanditConfig()
         self.manager = manager.BanditManager(conf, 'file')
         (tmp_fd, self.tmp_fname) = tempfile.mkstemp()
         self.context = {'filename': self.tmp_fname,
@@ -38,7 +37,7 @@ class CsvFormatterTests(testtools.TestCase):
                         'linerange': [4]}
         self.check_name = 'hardcoded_bind_all_interfaces'
         self.issue = issue.Issue(bandit.MEDIUM, bandit.MEDIUM,
-                      'Possible binding to all interfaces.')
+                                 'Possible binding to all interfaces.')
         self.manager.out_file = self.tmp_fname
 
         self.issue.fname = self.context['filename']
@@ -49,7 +48,8 @@ class CsvFormatterTests(testtools.TestCase):
         self.manager.results.append(self.issue)
 
     def test_report(self):
-        b_csv.report(self.manager, self.tmp_fname, self.issue.severity,
+        tmp_file = open(self.tmp_fname, 'w')
+        b_csv.report(self.manager, tmp_file, self.issue.severity,
                      self.issue.confidence)
 
         with open(self.tmp_fname) as f:

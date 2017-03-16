@@ -12,25 +12,27 @@
 #  License for the specific language governing permissions and limitations
 #  under the License.
 
+import collections
 import json
-import os
 import tempfile
 
+import mock
 import testtools
 
 import bandit
-from bandit.core import constants
 from bandit.core import config
-from bandit.core import manager
+from bandit.core import constants
 from bandit.core import issue
+from bandit.core import manager
+from bandit.core import metrics
 from bandit.formatters import json as b_json
+
 
 class JsonFormatterTests(testtools.TestCase):
 
     def setUp(self):
         super(JsonFormatterTests, self).setUp()
-        cfg_file = os.path.join(os.getcwd(), 'bandit/config/bandit.yaml')
-        conf = config.BanditConfig(cfg_file)
+        conf = config.BanditConfig()
         self.manager = manager.BanditManager(conf, 'file')
         (tmp_fd, self.tmp_fname) = tempfile.mkstemp()
         self.context = {'filename': self.tmp_fname,
@@ -38,7 +40,13 @@ class JsonFormatterTests(testtools.TestCase):
                         'linerange': [4]}
         self.check_name = 'hardcoded_bind_all_interfaces'
         self.issue = issue.Issue(bandit.MEDIUM, bandit.MEDIUM,
-                      'Possible binding to all interfaces.')
+                                 'Possible binding to all interfaces.')
+
+        self.candidates = [issue.Issue(bandit.LOW, bandit.LOW, 'Candidate A',
+                                       lineno=1),
+                           issue.Issue(bandit.HIGH, bandit.HIGH, 'Candiate B',
+                                       lineno=2)]
+
         self.manager.out_file = self.tmp_fname
 
         self.issue.fname = self.context['filename']
@@ -47,13 +55,28 @@ class JsonFormatterTests(testtools.TestCase):
         self.issue.test = self.check_name
 
         self.manager.results.append(self.issue)
+        self.manager.metrics = metrics.Metrics()
 
-    def test_report(self):
+        # mock up the metrics
+        for key in ['_totals', 'binding.py']:
+            self.manager.metrics.data[key] = {'loc': 4, 'nosec': 2}
+            for (criteria, default) in constants.CRITERIA:
+                for rank in constants.RANKING:
+                    self.manager.metrics.data[key]['{0}.{1}'.format(
+                        criteria, rank
+                    )] = 0
+
+    @mock.patch('bandit.core.manager.BanditManager.get_issue_list')
+    def test_report(self, get_issue_list):
         self.manager.files_list = ['binding.py']
         self.manager.scores = [{'SEVERITY': [0] * len(constants.RANKING),
                                 'CONFIDENCE': [0] * len(constants.RANKING)}]
 
-        b_json.report(self.manager, self.tmp_fname, self.issue.severity,
+        get_issue_list.return_value = collections.OrderedDict(
+            [(self.issue, self.candidates)])
+
+        tmp_file = open(self.tmp_fname, 'w')
+        b_json.report(self.manager, tmp_file, self.issue.severity,
                       self.issue.confidence)
 
         with open(self.tmp_fname) as f:
@@ -70,5 +93,4 @@ class JsonFormatterTests(testtools.TestCase):
             self.assertEqual(self.context['linerange'],
                              data['results'][0]['line_range'])
             self.assertEqual(self.check_name, data['results'][0]['test_name'])
-            self.assertEqual('binding.py', data['stats'][0]['filename'])
-            self.assertEqual(0, data['stats'][0]['score'])
+            self.assertIn('candidates', data['results'][0])

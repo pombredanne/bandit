@@ -14,75 +14,116 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
+import collections
 import fnmatch
+import json
 import logging
 import os
 import sys
+import traceback
 
 from bandit.core import constants as b_constants
 from bandit.core import extension_loader
+from bandit.core import issue
 from bandit.core import meta_ast as b_meta_ast
+from bandit.core import metrics
 from bandit.core import node_visitor as b_node_visitor
 from bandit.core import test_set as b_test_set
 
 
-logger = logging.getLogger(__name__)
+LOG = logging.getLogger(__name__)
 
 
-class BanditManager():
+class BanditManager(object):
 
     scope = []
 
     def __init__(self, config, agg_type, debug=False, verbose=False,
-                 profile_name=None):
+                 profile=None, ignore_nosec=False):
         '''Get logger, config, AST handler, and result store ready
 
         :param config: config options object
         :type config: bandit.core.BanditConfig
         :param agg_type: aggregation type
-        :param debug: Whether to show debug messsages or not
+        :param debug: Whether to show debug messages or not
         :param verbose: Whether to show verbose output
         :param profile_name: Optional name of profile to use (from cmd line)
+        :param ignore_nosec: Whether to ignore #nosec or not
         :return:
         '''
         self.debug = debug
         self.verbose = verbose
+        if not profile:
+            profile = {}
+        self.ignore_nosec = ignore_nosec
         self.b_conf = config
         self.files_list = []
         self.excluded_files = []
         self.b_ma = b_meta_ast.BanditMetaAst()
         self.skipped = []
         self.results = []
+        self.baseline = []
         self.agg_type = agg_type
-
-        # if the profile name was specified, try to find it in the config
-        if profile_name:
-            if profile_name in self.b_conf.config['profiles']:
-                profile = self.b_conf.config['profiles'][profile_name]
-                logger.debug(
-                    "read in profile '%s': %s",
-                    profile_name, profile
-                )
-            else:
-                raise RuntimeError('unable to find profile (%s) in config'
-                                   'file: %s' % (profile_name,
-                                                 self.b_conf.config_file))
-        else:
-            profile = None
-
-        self.b_ts = b_test_set.BanditTestSet(config=self.b_conf,
-                                             profile=profile)
+        self.metrics = metrics.Metrics()
+        self.b_ts = b_test_set.BanditTestSet(config, profile)
 
         # set the increment of after how many files to show progress
-        self.progress = self.b_conf.get_setting('progress')
+        self.progress = b_constants.progress_increment
         self.scores = []
 
-    def get_issue_list(self):
-        return self.results
+    def get_skipped(self):
+        ret = []
+        # "skip" is a tuple of name and reason, decode just the name
+        for skip in self.skipped:
+            if isinstance(skip[0], bytes):
+                ret.append((skip[0].decode('utf-8'), skip[1]))
+            else:
+                ret.append(skip)
+        return ret
 
-    @property
-    def has_tests(self):
-        return self.b_ts.has_tests
+    def get_issue_list(self,
+                       sev_level=b_constants.LOW,
+                       conf_level=b_constants.LOW):
+        return self.filter_results(sev_level, conf_level)
+
+    def populate_baseline(self, data):
+        '''Populate a baseline set of issues from a JSON report
+
+        This will populate a list of baseline issues discovered from a previous
+        run of bandit. Later this baseline can be used to filter out the result
+        set, see filter_results.
+        '''
+        items = []
+        try:
+            jdata = json.loads(data)
+            items = [issue.issue_from_dict(j) for j in jdata["results"]]
+        except Exception as e:
+            LOG.warning("Failed to load baseline data: %s", e)
+        self.baseline = items
+
+    def filter_results(self, sev_filter, conf_filter):
+        '''Returns a list of results filtered by the baseline
+
+        This works by checking the number of results returned from each file we
+        process. If the number of results is different to the number reported
+        for the same file in the baseline, then we return all results for the
+        file. We can't reliably return just the new results, as line numbers
+        will likely have changed.
+
+        :param sev_filter: severity level filter to apply
+        :param conf_filter: confidence level filter to apply
+        '''
+
+        results = [i for i in self.results if
+                   i.filter(sev_filter, conf_filter)]
+
+        if not self.baseline:
+            return results
+
+        unmatched = _compare_baseline_results(self.baseline, results)
+        # if it's a baseline we'll return a dictionary of issues and a list of
+        # candidate issues
+        return _find_candidate_matches(unmatched, results)
 
     def results_count(self, sev_filter=b_constants.LOW,
                       conf_filter=b_constants.LOW):
@@ -92,42 +133,34 @@ class BanditManager():
         :param conf_filter: Confidence level to filter
         :return: Number of results in the set
         '''
-        return sum(i.filter(sev_filter, conf_filter) for i in self.results)
+        return len(self.get_issue_list(sev_filter, conf_filter))
 
-    def output_results(self, lines, sev_level, conf_level, output_filename,
+    def output_results(self, lines, sev_level, conf_level, output_file,
                        output_format):
         '''Outputs results from the result store
 
         :param lines: How many surrounding lines to show per result
         :param sev_level: Which severity levels to show (LOW, MEDIUM, HIGH)
         :param conf_level: Which confidence levels to show (LOW, MEDIUM, HIGH)
-        :param output_filename: File to store results
-        :param output_format: output format, 'csv', 'json', 'txt', 'xml', or
-            'html'
+        :param output_file: File to store results
+        :param output_format: output format plugin name
         :return: -
         '''
         try:
             formatters_mgr = extension_loader.MANAGER.formatters_mgr
-            try:
-                formatter = formatters_mgr[output_format]
-            except KeyError:  # Unrecognized format, so use text instead
-                formatter = formatters_mgr['txt']
-                output_format = 'txt'
+            if output_format not in formatters_mgr:
+                output_format = 'screen' if sys.stdout.isatty() else 'txt'
 
-            if output_format == 'csv':
-                lines = 1
-            elif formatter.name == 'txt' and output_filename:
-                output_format = 'plain'
-
+            formatter = formatters_mgr[output_format]
             report_func = formatter.plugin
-            report_func(self, filename=output_filename,
-                        sev_level=sev_level, conf_level=conf_level,
-                        lines=lines, out_format=output_format)
+            report_func(self, fileobj=output_file, sev_level=sev_level,
+                        conf_level=conf_level, lines=lines)
 
-        except IOError:
-            print("Unable to write to file: %s" % output_filename)
+        except Exception as e:
+            raise RuntimeError("Unable to output report using '%s' formatter: "
+                               "%s" % (output_format, str(e)))
 
-    def discover_files(self, targets, recursive=False):
+    def discover_files(self, targets, recursive=False, excluded_paths=''):
         '''Add tests directly and from a directory to the test set
 
         :param targets: The command line list of files and directories
@@ -142,6 +175,11 @@ class BanditManager():
         excluded_path_strings = self.b_conf.get_option('exclude_dirs') or []
         included_globs = self.b_conf.get_option('include') or ['*.py']
 
+        # if there are command line provided exclusions add them to the list
+        if excluded_paths:
+            for path in excluded_paths.split(','):
+                excluded_path_strings.append(path)
+
         # build list of files we will analyze
         for fname in targets:
             # if this is a directory and recursive is set, find all files
@@ -155,7 +193,7 @@ class BanditManager():
                     files_list.update(new_files)
                     excluded_files.update(newly_excluded)
                 else:
-                    logger.warn("Skipping directory (%s), use -r flag to "
+                    LOG.warning("Skipping directory (%s), use -r flag to "
                                 "scan contents", fname)
 
             else:
@@ -172,21 +210,6 @@ class BanditManager():
         self.files_list = sorted(files_list)
         self.excluded_files = sorted(excluded_files)
 
-    def check_output_destination(self, output_filename):
-        # case where file already exists
-        if os.path.isfile(output_filename):
-            return 'File already exists'
-        else:
-            # case where specified destination is a directory
-            if os.path.isdir(output_filename):
-                return 'Specified destination is a directory'
-            # case where specified destination is not writable
-            try:
-                open(output_filename, 'w').close()
-            except IOError:
-                return 'Specified destination is not writable'
-        return True
-
     def run_tests(self):
         '''Runs through all files in the scope
 
@@ -194,65 +217,95 @@ class BanditManager():
         '''
         # display progress, if number of files warrants it
         if len(self.files_list) > self.progress:
-            sys.stdout.write("%s [" % len(self.files_list))
+            sys.stderr.write("%s [" % len(self.files_list))
 
         # if we have problems with a file, we'll remove it from the files_list
         # and add it to the skipped list instead
         new_files_list = list(self.files_list)
 
         for count, fname in enumerate(self.files_list):
-            logger.debug("working on file : %s", fname)
+            LOG.debug("working on file : %s", fname)
 
             if len(self.files_list) > self.progress:
                 # is it time to update the progress indicator?
                 if count % self.progress == 0:
-                    sys.stdout.write("%s.. " % count)
-                    sys.stdout.flush()
+                    sys.stderr.write("%s.. " % count)
+                    sys.stderr.flush()
             try:
-                with open(fname, 'rU') as fdata:
-                    try:
-                        # parse the current file
-                        score = self._execute_ast_visitor(
-                            fname, fdata, self.b_ma, self.b_ts)
-                        self.scores.append(score)
-                    except KeyboardInterrupt as e:
-                        sys.exit(2)
+                if fname == '-':
+                    sys.stdin = os.fdopen(sys.stdin.fileno(), 'rb', 0)
+                    self._parse_file('<stdin>', sys.stdin, new_files_list)
+                else:
+                    with open(fname, 'rb') as fdata:
+                        self._parse_file(fname, fdata, new_files_list)
             except IOError as e:
                 self.skipped.append((fname, e.strerror))
                 new_files_list.remove(fname)
-            except SyntaxError as e:
-                self.skipped.append(
-                    (fname, "syntax error while parsing AST from file"))
-                new_files_list.remove(fname)
 
         if len(self.files_list) > self.progress:
-            sys.stdout.write("]\n")
-            sys.stdout.flush()
+            sys.stderr.write("]\n")
+            sys.stderr.flush()
 
         # reflect any files which may have been skipped
         self.files_list = new_files_list
 
-    def _execute_ast_visitor(self, fname, fdata, b_ma, b_ts):
+        # do final aggregation of metrics
+        self.metrics.aggregate()
+
+    def _parse_file(self, fname, fdata, new_files_list):
+        try:
+            # parse the current file
+            data = fdata.read()
+            lines = data.splitlines()
+            self.metrics.begin(fname)
+            self.metrics.count_locs(lines)
+            if self.ignore_nosec:
+                nosec_lines = set()
+            else:
+                nosec_lines = set(
+                    lineno + 1 for
+                    (lineno, line) in enumerate(lines)
+                    if b'#nosec' in line or b'# nosec' in line)
+            score = self._execute_ast_visitor(fname, data, nosec_lines)
+            self.scores.append(score)
+            self.metrics.count_issues([score, ])
+        except KeyboardInterrupt as e:
+            sys.exit(2)
+        except SyntaxError as e:
+            self.skipped.append((fname,
+                                 "syntax error while parsing AST from file"))
+            new_files_list.remove(fname)
+        except Exception as e:
+            LOG.error("Exception occurred when executing tests against "
+                      "%s. Run \"bandit --debug %s\" to see the full "
+                      "traceback.", fname, fname)
+            self.skipped.append((fname, 'exception while scanning file'))
+            new_files_list.remove(fname)
+            LOG.debug("  Exception string: %s", e)
+            LOG.debug("  Exception traceback: %s", traceback.format_exc())
+
+    def _execute_ast_visitor(self, fname, data, nosec_lines):
         '''Execute AST parse on each file
 
         :param fname: The name of the file being parsed
-        :param fdata: The file data of the file being parsed
-        :param b_ma: The class Meta AST instance
-        :param b_ts: The class test set instance
+        :param data: Original file contents
+        :param lines: The lines of code to process
         :return: The accumulated test score
         '''
         score = []
-        if fdata is not None:
-            res = b_node_visitor.BanditNodeVisitor(
-                fname, self.b_conf, b_ma, b_ts, self.debug
-            )
-            score = res.process(fdata)
-            self.results.extend(res.tester.results)
+        res = b_node_visitor.BanditNodeVisitor(fname, self.b_ma,
+                                               self.b_ts, self.debug,
+                                               nosec_lines, self.metrics)
+
+        score = res.process(data)
+        self.results.extend(res.tester.results)
         return score
 
 
-def _get_files_from_dir(files_dir, included_globs=['*.py'],
+def _get_files_from_dir(files_dir, included_globs=None,
                         excluded_path_strings=None):
+    if not included_globs:
+        included_globs = ['*.py']
     if not excluded_path_strings:
         excluded_path_strings = []
 
@@ -300,3 +353,38 @@ def _matches_glob_list(filename, glob_list):
         if fnmatch.fnmatch(filename, glob):
             return True
     return False
+
+
+def _compare_baseline_results(baseline, results):
+    """Compare a baseline list of issues to list of results
+
+    This function compares a baseline set of issues to a current set of issues
+    to find results that weren't present in the baseline.
+
+    :param baseline: Baseline list of issues
+    :param results: Current list of issues
+    :return: List of unmatched issues
+    """
+    return [a for a in results if a not in baseline]
+
+
+def _find_candidate_matches(unmatched_issues, results_list):
+    """Returns a dictionary with issue candidates
+
+    For example, let's say we find a new command injection issue in a file
+    which used to have two.  Bandit can't tell which of the command injection
+    issues in the file are new, so it will show all three.  The user should
+    be able to pick out the new one.
+
+    :param unmatched_issues: List of issues that weren't present before
+    :param results_list: Master list of current Bandit findings
+    :return: A dictionary with a list of candidates for each issue
+    """
+
+    issue_candidates = collections.OrderedDict()
+
+    for unmatched in unmatched_issues:
+        issue_candidates[unmatched] = ([i for i in results_list if
+                                        unmatched == i])
+
+    return issue_candidates

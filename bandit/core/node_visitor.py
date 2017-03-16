@@ -15,27 +15,22 @@
 # under the License.
 
 import ast
-import copy
 import logging
+import operator
 
 from bandit.core import constants
 from bandit.core import tester as b_tester
 from bandit.core import utils as b_utils
-from bandit.core.utils import InvalidModulePath
 
 
-logger = logging.getLogger(__name__)
+LOG = logging.getLogger(__name__)
 
 
 class BanditNodeVisitor(object):
-    context_template = {'node': None, 'filename': None,
-                        'name': None, 'qualname': None, 'module': None,
-                        'imports': None, 'import_aliases': None, 'call': None,
-                        'function': None, 'lineno': None, 'skip_lines': None}
-
-    def __init__(self, fname, config, metaast, testset,
-                 debug):
+    def __init__(self, fname, metaast, testset,
+                 debug, nosec_lines, metrics):
         self.debug = debug
+        self.nosec_lines = nosec_lines
         self.seen = 0
         self.scores = {
             'SEVERITY': [0] * len(constants.RANKING),
@@ -43,26 +38,22 @@ class BanditNodeVisitor(object):
         }
         self.depth = 0
         self.fname = fname
-        self.config = config
         self.metaast = metaast
         self.testset = testset
         self.imports = set()
-        self.context_template['imports'] = self.imports
         self.import_aliases = {}
-        self.context_template['import_aliases'] = self.import_aliases
         self.tester = b_tester.BanditTester(
-            self.config, self.testset, self.debug
-        )
+            self.testset, self.debug, nosec_lines)
 
         # in some cases we can't determine a qualified name
         try:
             self.namespace = b_utils.get_module_qualname_from_path(fname)
-        except InvalidModulePath:
-            logger.info('Unable to find qualified name for module: %s',
-                        self.fname)
+        except b_utils.InvalidModulePath:
+            LOG.info('Unable to find qualified name for module: %s',
+                     self.fname)
             self.namespace = ""
-        logger.debug('Module qualified name: %s', self.namespace)
-        self.lines = []
+        LOG.debug('Module qualified name: %s', self.namespace)
+        self.metrics = metrics
 
     def visit_ClassDef(self, node):
         '''Visitor for AST ClassDef node
@@ -71,14 +62,8 @@ class BanditNodeVisitor(object):
         :param node: Node being inspected
         :return: -
         '''
-
-        if self.debug:
-            logger.debug("visit_ClassDef called (%s)", ast.dump(node))
-
         # For all child nodes, add this class name to current namespace
         self.namespace = b_utils.namespace_path_join(self.namespace, node.name)
-        self.generic_visit(node)
-        self.namespace = b_utils.namespace_path_split(self.namespace)[0]
 
     def visit_FunctionDef(self, node):
         '''Visitor for AST FunctionDef nodes
@@ -91,10 +76,6 @@ class BanditNodeVisitor(object):
         '''
 
         self.context['function'] = node
-
-        if self.debug:
-            logger.debug("visit_FunctionDef called (%s)", ast.dump(node))
-
         qualname = self.namespace + '.' + b_utils.get_func_name(node)
         name = qualname.split('.')[-1]
 
@@ -105,8 +86,6 @@ class BanditNodeVisitor(object):
         # current namespace
         self.namespace = b_utils.namespace_path_join(self.namespace, name)
         self.update_scores(self.tester.run_tests(self.context, 'FunctionDef'))
-        self.generic_visit(node)
-        self.namespace = b_utils.namespace_path_split(self.namespace)[0]
 
     def visit_Call(self, node):
         '''Visitor for AST Call nodes
@@ -118,10 +97,6 @@ class BanditNodeVisitor(object):
         '''
 
         self.context['call'] = node
-
-        if self.debug:
-            logger.debug("visit_Call called (%s)", ast.dump(node))
-
         qualname = b_utils.get_call_name(node, self.import_aliases)
         name = qualname.split('.')[-1]
 
@@ -129,7 +104,6 @@ class BanditNodeVisitor(object):
         self.context['name'] = name
 
         self.update_scores(self.tester.run_tests(self.context, 'Call'))
-        self.generic_visit(node)
 
     def visit_Import(self, node):
         '''Visitor for AST Import nodes
@@ -139,28 +113,21 @@ class BanditNodeVisitor(object):
         :param node: The node that is being inspected
         :return: -
         '''
-        if self.debug:
-            logger.debug("visit_Import called (%s)", ast.dump(node))
-
         for nodename in node.names:
             if nodename.asname:
-                self.context['import_aliases'][nodename.asname] = nodename.name
-            self.context['imports'].add(nodename.name)
+                self.import_aliases[nodename.asname] = nodename.name
+            self.imports.add(nodename.name)
             self.context['module'] = nodename.name
         self.update_scores(self.tester.run_tests(self.context, 'Import'))
-        self.generic_visit(node)
 
     def visit_ImportFrom(self, node):
-        '''Visitor for AST Import nodes
+        '''Visitor for AST ImportFrom nodes
 
         add relevant information about node to
         the context for use in tests which inspect imports.
         :param node: The node that is being inspected
         :return: -
         '''
-        if self.debug:
-            logger.debug("visit_ImportFrom called (%s)", ast.dump(node))
-
         module = node.module
         if module is None:
             return self.visit_Import(node)
@@ -171,20 +138,19 @@ class BanditNodeVisitor(object):
             #      name in import_aliases instead of the local definition.
             #      We need better tracking of names.
             if nodename.asname:
-                self.context['import_aliases'][nodename.asname] = (
+                self.import_aliases[nodename.asname] = (
                     module + "." + nodename.name
                 )
             else:
                 # Even if import is not aliased we need an entry that maps
                 # name to module.name.  For example, with 'from a import b'
                 # b should be aliased to the qualified name a.b
-                self.context['import_aliases'][nodename.name] = (module + '.' +
-                                                                 nodename.name)
-            self.context['imports'].add(module + "." + nodename.name)
+                self.import_aliases[nodename.name] = (module + '.' +
+                                                      nodename.name)
+            self.imports.add(module + "." + nodename.name)
             self.context['module'] = module
             self.context['name'] = nodename.name
         self.update_scores(self.tester.run_tests(self.context, 'ImportFrom'))
-        self.generic_visit(node)
 
     def visit_Str(self, node):
         '''Visitor for AST String nodes
@@ -195,14 +161,9 @@ class BanditNodeVisitor(object):
         :return: -
         '''
         self.context['str'] = node.s
-
-        if self.debug:
-            logger.debug("visit_Str called (%s)", ast.dump(node))
-
         if not isinstance(node.parent, ast.Expr):  # docstring
             self.context['linerange'] = b_utils.linerange_fix(node.parent)
             self.update_scores(self.tester.run_tests(self.context, 'Str'))
-        self.generic_visit(node)
 
     def visit_Bytes(self, node):
         '''Visitor for AST Bytes nodes
@@ -213,79 +174,57 @@ class BanditNodeVisitor(object):
         :return: -
         '''
         self.context['bytes'] = node.s
-
-        if self.debug:
-            logger.debug("visit_Bytes called (%s)", ast.dump(node))
-
         if not isinstance(node.parent, ast.Expr):  # docstring
             self.context['linerange'] = b_utils.linerange_fix(node.parent)
             self.update_scores(self.tester.run_tests(self.context, 'Bytes'))
-        self.generic_visit(node)
 
-    def visit_Exec(self, node):
-        self.context['str'] = 'exec'
-
-        if self.debug:
-            logger.debug("visit_Exec called (%s)", ast.dump(node))
-
-        self.update_scores(self.tester.run_tests(self.context, 'Exec'))
-        self.generic_visit(node)
-
-    def visit_Assert(self, node):
-        self.context['str'] = 'assert'
+    def pre_visit(self, node):
+        self.context = {}
+        self.context['imports'] = self.imports
+        self.context['import_aliases'] = self.import_aliases
 
         if self.debug:
-            logger.debug("visit_Assert called (%s)", ast.dump(node))
-
-        self.update_scores(self.tester.run_tests(self.context, 'Assert'))
-        self.generic_visit(node)
-
-    def visit_ExceptHandler(self, node):
-        if self.debug:
-            logger.debug("visit_ExceptHandler called (%s)",
-                         ast.dump(node))
-
-        self.update_scores(self.tester.run_tests(self.context,
-                                                 'ExceptHandler'))
-        self.generic_visit(node)
-
-    def visit(self, node):
-        '''Generic visitor
-
-        add the node to the node collection, and log it
-        :param node: The node that is being inspected
-        :return: -
-        '''
-        self.context = copy.copy(self.context_template)
-
-        if self.debug:
-            logger.debug(ast.dump(node))
-
-        if self.debug:
+            LOG.debug(ast.dump(node))
             self.metaast.add_node(node, '', self.depth)
 
         if hasattr(node, 'lineno'):
             self.context['lineno'] = node.lineno
-            if ("# nosec" in self.lines[node.lineno - 1] or
-                    "#nosec" in self.lines[node.lineno - 1]):
-                logger.debug("skipped, nosec")
-                return
+
+            if node.lineno in self.nosec_lines:
+                LOG.debug("skipped, nosec")
+                self.metrics.note_nosec()
+                return False
 
         self.context['node'] = node
         self.context['linerange'] = b_utils.linerange_fix(node)
         self.context['filename'] = self.fname
 
         self.seen += 1
-        logger.debug("entering: %s %s [%s]", hex(id(node)), type(node),
-                     self.depth)
+        LOG.debug("entering: %s %s [%s]", hex(id(node)), type(node),
+                  self.depth)
         self.depth += 1
+        LOG.debug(self.context)
+        return True
 
-        method = 'visit_' + node.__class__.__name__
-        visitor = getattr(self, method, self.generic_visit)
-        visitor(node)
+    def visit(self, node):
+        name = node.__class__.__name__
+        method = 'visit_' + name
+        visitor = getattr(self, method, None)
+        if visitor is not None:
+            if self.debug:
+                LOG.debug("%s called (%s)", method, ast.dump(node))
+            visitor(node)
+        else:
+            self.update_scores(self.tester.run_tests(self.context, name))
 
+    def post_visit(self, node):
         self.depth -= 1
-        logger.debug("%s\texiting : %s", self.depth, hex(id(node)))
+        LOG.debug("%s\texiting : %s", self.depth, hex(id(node)))
+
+        # HACK(tkelsey): this is needed to clean up post-recursion stuff that
+        # gets setup in the visit methods for these node types.
+        if isinstance(node, ast.FunctionDef) or isinstance(node, ast.ClassDef):
+            self.namespace = b_utils.namespace_path_split(self.namespace)[0]
 
     def generic_visit(self, node):
         """Drive the visitor."""
@@ -299,12 +238,20 @@ class BanditNodeVisitor(object):
                         else:
                             setattr(item, 'sibling', None)
                         setattr(item, 'parent', node)
-                        self.visit(node=item)
+
+                        if self.pre_visit(item):
+                            self.visit(item)
+                            self.generic_visit(item)
+                            self.post_visit(item)
 
             elif isinstance(value, ast.AST):
                 setattr(value, 'sibling', None)
                 setattr(value, 'parent', node)
-                self.visit(node=value)
+
+                if self.pre_visit(value):
+                    self.visit(value)
+                    self.generic_visit(value)
+                    self.post_visit(value)
 
     def update_scores(self, scores):
         '''Score updater
@@ -313,22 +260,20 @@ class BanditNodeVisitor(object):
         severity, this is needed to update the stored list.
         :param score: The score list to update our scores with
         '''
-        def add(x, y):
-            return x + y
+        # we'll end up with something like:
+        # SEVERITY: {0, 0, 0, 10}  where 10 is weighted by finding and level
         for score_type in self.scores:
             self.scores[score_type] = list(map(
-                add, self.scores[score_type], scores[score_type]
+                operator.add, self.scores[score_type], scores[score_type]
             ))
 
-    def process(self, fdata):
+    def process(self, data):
         '''Main process loop
 
         Build and process the AST
-        :param fdata: the open filehandle for the code to be processed
+        :param lines: lines code to process
         :return score: the aggregated score for the current file
         '''
-        fdata.seek(0)
-        self.lines = fdata.readlines()
-        f_ast = ast.parse("".join(self.lines))
+        f_ast = ast.parse(data)
         self.generic_visit(f_ast)
         return self.scores

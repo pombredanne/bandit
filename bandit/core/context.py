@@ -21,7 +21,7 @@ import six
 from bandit.core import utils
 
 
-class Context():
+class Context(object):
     def __init__(self, context_object=None):
         '''Initialize the class with a context, empty dict otherwise
 
@@ -103,10 +103,8 @@ class Context():
 
         :return: A dictionary of keyword parameters for a call as strings
         '''
-        if (
-            'call' in self._context and
-            hasattr(self._context['call'], 'keywords')
-        ):
+        if ('call' in self._context and
+                hasattr(self._context['call'], 'keywords')):
             return_dict = {}
             for li in self._context['call'].keywords:
                 if hasattr(li.value, 'attr'):
@@ -152,7 +150,7 @@ class Context():
         '''Get escaped value of the object.
 
         Turn the value of a string or bytes object into byte sequence with
-        unknown, control, and \ characters escaped.
+        unknown, control, and \\ characters escaped.
 
         This function should be used when looking for a known sequence in a
         potentially badly encoded string in the code.
@@ -202,51 +200,53 @@ class Context():
         :return: The value of the AST literal
         '''
         if isinstance(literal, _ast.Num):
-            return literal.n
+            literal_value = literal.n
 
         elif isinstance(literal, _ast.Str):
-            return literal.s
+            literal_value = literal.s
 
         elif isinstance(literal, _ast.List):
             return_list = list()
             for li in literal.elts:
                 return_list.append(self._get_literal_value(li))
-            return return_list
+            literal_value = return_list
 
         elif isinstance(literal, _ast.Tuple):
             return_tuple = tuple()
             for ti in literal.elts:
                 return_tuple = return_tuple + (self._get_literal_value(ti),)
-            return return_tuple
+            literal_value = return_tuple
 
         elif isinstance(literal, _ast.Set):
             return_set = set()
             for si in literal.elts:
                 return_set.add(self._get_literal_value(si))
-            return return_set
+            literal_value = return_set
 
         elif isinstance(literal, _ast.Dict):
-            return dict(zip(literal.keys, literal.values))
+            literal_value = dict(zip(literal.keys, literal.values))
 
         elif isinstance(literal, _ast.Ellipsis):
             # what do we want to do with this?
-            pass
+            literal_value = None
 
         elif isinstance(literal, _ast.Name):
-            return literal.id
+            literal_value = literal.id
 
         # NOTE(sigmavirus24): NameConstants are only part of the AST in Python
         # 3. NameConstants tend to refer to things like True and False. This
         # prevents them from being re-assigned in Python 3.
         elif six.PY3 and isinstance(literal, _ast.NameConstant):
-            return str(literal.value)
+            literal_value = str(literal.value)
 
         # NOTE(sigmavirus24): Bytes are only part of the AST in Python 3
         elif six.PY3 and isinstance(literal, _ast.Bytes):
-            return literal.s
+            literal_value = literal.s
 
         else:
-            return None
+            literal_value = None
+
+        return literal_value
 
     def get_call_arg_value(self, argument_name):
         '''Gets the value of a named argument in a function call.
@@ -273,8 +273,6 @@ class Context():
                 argument_values = list((argument_values,))
             for val in argument_values:
                 if arg_value == val:
-                    # if matched, fix up the context lineno for reporting
-                    self.set_lineno_for_call_arg(argument_name)
                     return True
             return False
         else:
@@ -282,20 +280,17 @@ class Context():
             # eventuality
             return None
 
-    def set_lineno_for_call_arg(self, argument_name):
-        '''Updates the line number for a specific named argument
+    def get_lineno_for_call_arg(self, argument_name):
+        '''Get the line number for a specific named argument
 
-        If a call is split over multiple lines, when a keyword arg is found
-        the issue will be reported with the line number of the start of the
-        call. This function updates the line number in the current context
-        copy to match the actual line where the match occurs.
-        :call_node: the call to find the argument in
+        In case the call is split over multiple lines, get the correct one for
+        the argument.
         :param argument_name: A string - name of the argument to look for
-        :return: Integer - the line number of the found argument
+        :return: Integer - the line number of the found argument, or -1
         '''
         for key in self.node.keywords:
-            if key.arg is argument_name:
-                self._context['lineno'] = key.value.lineno
+            if key.arg == argument_name:
+                return key.value.lineno
 
     def get_call_arg_at_position(self, position_num):
         '''Returns positional argument at the specified position (if it exists)
@@ -303,11 +298,9 @@ class Context():
         :param position_num: The index of the argument to return the value for
         :return: Value of the argument at the specified position if it exists
         '''
-        if (
-            'call' in self._context and
-            hasattr(self._context['call'], 'args') and
-            position_num < len(self._context['call'].args)
-        ):
+        if ('call' in self._context and
+                hasattr(self._context['call'], 'args') and
+                position_num < len(self._context['call'].args)):
             return self._get_literal_value(
                 self._context['call'].args[position_num]
             )
@@ -320,10 +313,7 @@ class Context():
         :param module: The module name to look for
         :return: True if the module is found, False otherwise
         '''
-        if 'module' in self._context and self._context['module'] == module:
-            return True
-        else:
-            return False
+        return 'module' in self._context and self._context['module'] == module
 
     def is_module_imported_exact(self, module):
         '''Check if a specified module has been imported; only exact matches.
@@ -331,10 +321,8 @@ class Context():
         :param module: The module name to look for
         :return: True if the module is found, False otherwise
         '''
-        if 'imports' in self._context and module in self._context['imports']:
-            return True
-        else:
-            return False
+        return ('imports' in self._context and
+                module in self._context['imports'])
 
     def is_module_imported_like(self, module):
         '''Check if a specified module has been imported

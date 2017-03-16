@@ -1,3 +1,4 @@
+# Copyright (c) 2015 Hewlett Packard Enterprise
 # -*- coding:utf-8 -*-
 #
 # Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -12,110 +13,152 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
-import collections
+r"""
+==============
+Text Formatter
+==============
+
+This formatter outputs the issues as plain text.
+
+:Example:
+
+.. code-block:: none
+
+    >> Issue: [B301:blacklist_calls] Use of unsafe yaml load. Allows
+       instantiation of arbitrary objects. Consider yaml.safe_load().
+
+       Severity: Medium   Confidence: High
+       Location: examples/yaml_load.py:5
+    4       ystr = yaml.dump({'a' : 1, 'b' : 2, 'c' : 3})
+    5       y = yaml.load(ystr)
+    6       yaml.dump(y)
+
+.. versionadded:: 0.9.0
+
+"""
+
+from __future__ import print_function
+
 import datetime
 import logging
+import sys
 
-from bandit.core import utils
+from bandit.core import constants
+from bandit.core import test_properties
+from bandit.formatters import utils
 
-logger = logging.getLogger(__name__)
+LOG = logging.getLogger(__name__)
 
 
-def report(manager, filename, sev_level, conf_level, lines=-1,
-           out_format='txt'):
-    '''Prints issues in Text formt
+def get_verbose_details(manager):
+    bits = []
+    bits.append(u'Files in scope (%i):' % len(manager.files_list))
+    tpl = u"\t%s (score: {SEVERITY: %i, CONFIDENCE: %i})"
+    bits.extend([tpl % (item, sum(score['SEVERITY']), sum(score['CONFIDENCE']))
+                 for (item, score)
+                 in zip(manager.files_list, manager.scores)])
+    bits.append(u'Files excluded (%i):' % len(manager.excluded_files))
+    bits.extend([u"\t%s" % fname for fname in manager.excluded_files])
+    return '\n'.join([bit for bit in bits])
+
+
+def get_metrics(manager):
+    bits = []
+    bits.append("\nRun metrics:")
+    for (criteria, default) in constants.CRITERIA:
+        bits.append("\tTotal issues (by %s):" % (criteria.lower()))
+        for rank in constants.RANKING:
+            bits.append("\t\t%s: %s" % (
+                rank.capitalize(),
+                manager.metrics.data['_totals']['%s.%s' % (criteria, rank)]))
+    return '\n'.join([bit for bit in bits])
+
+
+def _output_issue_str(issue, indent, show_lineno=True, show_code=True,
+                      lines=-1):
+    # returns a list of lines that should be added to the existing lines list
+    bits = []
+    bits.append("%s>> Issue: [%s:%s] %s" % (
+        indent, issue.test_id, issue.test, issue.text))
+
+    bits.append("%s   Severity: %s   Confidence: %s" % (
+        indent, issue.severity.capitalize(), issue.confidence.capitalize()))
+
+    bits.append("%s   Location: %s:%s" % (
+        indent, issue.fname, issue.lineno if show_lineno else ""))
+
+    if show_code:
+        bits.extend([indent + l for l in
+                     issue.get_code(lines, True).split('\n')])
+
+    return '\n'.join([bit for bit in bits])
+
+
+def get_results(manager, sev_level, conf_level, lines):
+    bits = []
+    issues = manager.get_issue_list(sev_level, conf_level)
+    baseline = not isinstance(issues, list)
+    candidate_indent = ' ' * 10
+
+    if not len(issues):
+        return u"\tNo issues identified."
+
+    for issue in issues:
+        # if not a baseline or only one candidate we know the issue
+        if not baseline or len(issues[issue]) == 1:
+            bits.append(_output_issue_str(issue, "", lines=lines))
+
+        # otherwise show the finding and the candidates
+        else:
+            bits.append(_output_issue_str(issue, "",
+                                          show_lineno=False,
+                                          show_code=False))
+
+            bits.append(u'\n-- Candidate Issues --')
+            for candidate in issues[issue]:
+                bits.append(_output_issue_str(candidate,
+                                              candidate_indent,
+                                              lines=lines))
+                bits.append('\n')
+        bits.append(u'-' * 50)
+    return '\n'.join([bit for bit in bits])
+
+
+@test_properties.accepts_baseline
+def report(manager, fileobj, sev_level, conf_level, lines=-1):
+    """Prints discovered issues in the text format
 
     :param manager: the bandit manager object
-    :param filename: The output file name, or None for stdout
+    :param fileobj: The output file object, which may be sys.stdout
     :param sev_level: Filtering severity level
     :param conf_level: Filtering confidence level
     :param lines: Number of lines to report, -1 for all
-    :param out_format: The ouput format name
-    '''
+    """
 
-    tmpstr_list = []
-
-    # use a defaultdict to default to an empty string
-    color = collections.defaultdict(str)
-
-    if out_format == 'txt':
-        # get text colors from settings for TTY output
-        get_setting = manager.b_conf.get_setting
-        color = {'HEADER': get_setting('color_HEADER'),
-                 'DEFAULT': get_setting('color_DEFAULT'),
-                 'LOW': get_setting('color_LOW'),
-                 'MEDIUM': get_setting('color_MEDIUM'),
-                 'HIGH': get_setting('color_HIGH')
-                 }
-
-    # print header
-    tmpstr_list.append("%sRun started:%s\n\t%s\n" % (
-        color['HEADER'],
-        color['DEFAULT'],
-        datetime.datetime.utcnow()
-    ))
+    bits = []
+    bits.append("Run started:%s" % datetime.datetime.utcnow())
 
     if manager.verbose:
-        # print which files were inspected
-        tmpstr_list.append("\n%sFiles in scope (%s):%s\n" % (
-            color['HEADER'], len(manager.files_list),
-            color['DEFAULT']
-        ))
+        bits.append(get_verbose_details(manager))
 
-        for item in zip(manager.files_list, map(utils.sum_scores,
-                                                manager.scores)):
-            tmpstr_list.append("\t%s (score: %i)\n" % item)
+    bits.append("\nTest results:")
+    bits.append(get_results(manager, sev_level, conf_level, lines))
+    bits.append("\nCode scanned:")
+    bits.append('\tTotal lines of code: %i' %
+                (manager.metrics.data['_totals']['loc']))
 
-        # print which files were excluded and why
-        tmpstr_list.append("\n%sFiles excluded (%s):%s\n" %
-                           (color['HEADER'], len(manager.skipped),
-                            color['DEFAULT']))
-        for fname in manager.skipped:
-            tmpstr_list.append("\t%s\n" % fname)
+    bits.append('\tTotal lines skipped (#nosec): %i' %
+                (manager.metrics.data['_totals']['nosec']))
 
-    # print which files were skipped and why
-    tmpstr_list.append("\n%sFiles skipped (%s):%s\n" % (
-        color['HEADER'], len(manager.skipped),
-        color['DEFAULT']
-    ))
+    skipped = manager.get_skipped()
+    bits.append(get_metrics(manager))
+    bits.append("Files skipped (%i):" % len(skipped))
+    bits.extend(["\t%s (%s)" % skip for skip in skipped])
+    result = '\n'.join([bit for bit in bits]) + '\n'
 
-    for (fname, reason) in manager.skipped:
-        tmpstr_list.append("\t%s (%s)\n" % (fname, reason))
+    with fileobj:
+        wrapped_file = utils.wrap_file_object(fileobj)
+        wrapped_file.write(utils.convert_file_contents(result))
 
-    # print the results
-    tmpstr_list.append("\n%sTest results:%s\n" % (
-        color['HEADER'], color['DEFAULT']
-    ))
-
-    issues = manager.get_issue_list()
-    if not len(issues):
-        tmpstr_list.append("\tNo issues identified.\n")
-
-    for issue in issues:
-        # if the result isn't filtered out by severity
-        if issue.filter(sev_level, conf_level):
-            tmpstr_list.append("\n%s>> Issue: %s\n" % (
-                color.get(issue.severity, color['DEFAULT']),
-                issue.text
-            ))
-            tmpstr_list.append("   Severity: %s   Confidence: %s\n" % (
-                issue.severity.capitalize(),
-                issue.confidence.capitalize()
-            ))
-            tmpstr_list.append("   Location: %s:%s\n" % (
-                issue.fname,
-                issue.lineno
-            ))
-            tmpstr_list.append(color['DEFAULT'])
-
-            tmpstr_list.append(
-                issue.get_code(lines, True))
-
-    result = ''.join(tmpstr_list)
-
-    if filename:
-        with open(filename, 'w') as fout:
-            fout.write(result)
-        logger.info("Text output written to file: %s", filename)
-    else:
-        print(result)
+    if fileobj.name != sys.stdout.name:
+        LOG.info("Text output written to file: %s", fileobj.name)

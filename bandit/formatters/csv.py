@@ -12,41 +12,65 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
+r"""
+=============
+CSV Formatter
+=============
+
+This formatter outputs the issues in a comma separated values format.
+
+:Example:
+
+.. code-block:: none
+
+    filename,test_name,test_id,issue_severity,issue_confidence,issue_text,
+    line_number,line_range
+    examples/yaml_load.py,blacklist_calls,B301,MEDIUM,HIGH,"Use of unsafe yaml
+    load. Allows instantiation of arbitrary objects. Consider yaml.safe_load().
+    ",5,[5]
+
+.. versionadded:: 0.11.0
+
+"""
+# Necessary for this formatter to work when imported on Python 2. Importing
+# the standard library's csv module conflicts with the name of this module.
 from __future__ import absolute_import
+
 import csv
+import logging
+import sys
+
+LOG = logging.getLogger(__name__)
 
 
-def report(manager, filename, sev_level, conf_level, lines=-1,
-           out_format='csv'):
+def report(manager, fileobj, sev_level, conf_level, lines=-1):
     '''Prints issues in CSV format
 
     :param manager: the bandit manager object
-    :param filename: The output file name, or None for stdout
+    :param fileobj: The output file object, which may be sys.stdout
     :param sev_level: Filtering severity level
     :param conf_level: Filtering confidence level
     :param lines: Number of lines to report, -1 for all
-    :param out_format: The ouput format name
     '''
 
-    results = manager.get_issue_list()
+    results = manager.get_issue_list(sev_level=sev_level,
+                                     conf_level=conf_level)
 
-    if filename is None:
-        filename = 'bandit_results.csv'
-
-    with open(filename, 'w') as fout:
+    with fileobj:
         fieldnames = ['filename',
                       'test_name',
+                      'test_id',
                       'issue_severity',
                       'issue_confidence',
                       'issue_text',
                       'line_number',
                       'line_range']
 
-        writer = csv.DictWriter(fout, fieldnames=fieldnames,
+        writer = csv.DictWriter(fileobj, fieldnames=fieldnames,
                                 extrasaction='ignore')
         writer.writeheader()
         for result in results:
-            if result.filter(sev_level, conf_level):
-                writer.writerow(result.as_dict(with_code=False))
+            writer.writerow(result.as_dict(with_code=False))
 
-    print("CSV output written to file: %s" % filename)
+    if fileobj.name != sys.stdout.name:
+        LOG.info("CSV output written to file: %s", fileobj.name)

@@ -23,8 +23,6 @@ import tempfile
 
 import testtools
 
-import six
-
 from bandit.core import utils as b_utils
 
 
@@ -35,21 +33,19 @@ def _touch(path):
 
 
 class UtilTests(testtools.TestCase):
-    '''This set of tests exercises bandit.core.util functions
-    '''
+    '''This set of tests exercises bandit.core.util functions.'''
 
     def setUp(self):
         super(UtilTests, self).setUp()
         self._setup_get_module_qualname_from_path()
 
     def _setup_get_module_qualname_from_path(self):
-        '''Setup a fake module directory tree for testing
-           get_module_qualname_from_path().
+        '''Setup a fake directory for testing get_module_qualname_from_path().
 
-           Create temporary directory and then create fake .py files
-           within directory structure.  We setup test cases for
-           a typical module, a path misssing a middle __init__.py,
-           no __init__.py anywhere in path, symlinking .py files.
+        Create temporary directory and then create fake .py files
+        within directory structure.  We setup test cases for
+        a typical module, a path misssing a middle __init__.py,
+        no __init__.py anywhere in path, symlinking .py files.
         '''
 
         self.tempdir = tempfile.mkdtemp()
@@ -99,15 +95,23 @@ class UtilTests(testtools.TestCase):
                    os.path.join(self.tempdir, 'syms', 'a', 'bsym'))
 
     def test_get_module_qualname_from_path_abs_typical(self):
-        '''Test get_module_qualname_from_path with typical absolute paths'''
+        '''Test get_module_qualname_from_path with typical absolute paths.'''
 
         name = b_utils.get_module_qualname_from_path(os.path.join(
             self.tempdir, 'good', 'a', 'b', 'c', 'test_typical.py'))
         self.assertEqual('good.a.b.c.test_typical', name)
 
+    def test_get_module_qualname_from_path_with_dot(self):
+        '''Test get_module_qualname_from_path with a "." .'''
+
+        name = b_utils.get_module_qualname_from_path(os.path.join(
+            '.', '__init__.py'))
+
+        self.assertEqual('__init__', name)
+
     def test_get_module_qualname_from_path_abs_missingmid(self):
-        '''Test get_module_qualname_from_path with missing module
-           __init__.py'''
+        # Test get_module_qualname_from_path with missing module
+        # __init__.py
 
         name = b_utils.get_module_qualname_from_path(os.path.join(
             self.tempdir, 'missingmid', 'a', 'b', 'c',
@@ -115,8 +119,8 @@ class UtilTests(testtools.TestCase):
         self.assertEqual('b.c.test_missingmid', name)
 
     def test_get_module_qualname_from_path_abs_missingend(self):
-        '''Test get_module_qualname_from_path with no __init__.py
-        in last dir'''
+        # Test get_module_qualname_from_path with no __init__.py
+        # last dir'''
 
         name = b_utils.get_module_qualname_from_path(os.path.join(
             self.tempdir, 'missingend', 'a', 'b', 'c',
@@ -124,22 +128,22 @@ class UtilTests(testtools.TestCase):
         self.assertEqual('test_missingend', name)
 
     def test_get_module_qualname_from_path_abs_syms(self):
-        '''Test get_module_qualname_from_path with symlink in path'''
+        '''Test get_module_qualname_from_path with symlink in path.'''
 
         name = b_utils.get_module_qualname_from_path(os.path.join(
             self.tempdir, 'syms', 'a', 'bsym', 'c', 'test_typical.py'))
         self.assertEqual('syms.a.bsym.c.test_typical', name)
 
     def test_get_module_qualname_from_path_rel_typical(self):
-        '''Test get_module_qualname_from_path with typical relative paths'''
+        '''Test get_module_qualname_from_path with typical relative paths.'''
 
         name = b_utils.get_module_qualname_from_path(os.path.join(
             self.reltempdir, 'good', 'a', 'b', 'c', 'test_typical.py'))
         self.assertEqual('good.a.b.c.test_typical', name)
 
     def test_get_module_qualname_from_path_rel_missingmid(self):
-        '''Test get_module_qualname_from_path with module __init__.py
-           missing and relative paths'''
+        # Test get_module_qualname_from_path with module __init__.py
+        # missing and relative paths
 
         name = b_utils.get_module_qualname_from_path(os.path.join(
             self.reltempdir, 'missingmid', 'a', 'b', 'c',
@@ -147,8 +151,8 @@ class UtilTests(testtools.TestCase):
         self.assertEqual('b.c.test_missingmid', name)
 
     def test_get_module_qualname_from_path_rel_missingend(self):
-        '''Test get_module_qualname_from_path with __init__.py missing from
-           last dir and using relative paths'''
+        # Test get_module_qualname_from_path with __init__.py missing from
+        # last dir and using relative paths
 
         name = b_utils.get_module_qualname_from_path(os.path.join(
             self.reltempdir, 'missingend', 'a', 'b', 'c',
@@ -156,14 +160,14 @@ class UtilTests(testtools.TestCase):
         self.assertEqual('test_missingend', name)
 
     def test_get_module_qualname_from_path_rel_syms(self):
-        '''Test get_module_qualname_from_path with symbolic relative paths'''
+        '''Test get_module_qualname_from_path with symbolic relative paths.'''
 
         name = b_utils.get_module_qualname_from_path(os.path.join(
             self.reltempdir, 'syms', 'a', 'bsym', 'c', 'test_typical.py'))
         self.assertEqual('syms.a.bsym.c.test_typical', name)
 
     def test_get_module_qualname_from_path_sys(self):
-        '''Test get_module_qualname_from_path with system module paths'''
+        '''Test get_module_qualname_from_path with system module paths.'''
 
         name = b_utils.get_module_qualname_from_path(os.__file__)
         self.assertEqual('os', name)
@@ -173,13 +177,13 @@ class UtilTests(testtools.TestCase):
         # self.assertEqual(name, 'os.path')
 
     def test_get_module_qualname_from_path_invalid_path(self):
-        '''Test get_module_qualname_from_path with invalid path '''
+        '''Test get_module_qualname_from_path with invalid path.'''
 
         name = b_utils.get_module_qualname_from_path('/a/b/c/d/e.py')
         self.assertEqual('e', name)
 
     def test_get_module_qualname_from_path_dir(self):
-        '''Test get_module_qualname_from_path with dir path '''
+        '''Test get_module_qualname_from_path with dir path.'''
 
         self.assertRaises(b_utils.InvalidModulePath,
                           b_utils.get_module_qualname_from_path, '/tmp/')
@@ -194,13 +198,13 @@ class UtilTests(testtools.TestCase):
         self.assertEqual('name', tail)
 
     def test_get_call_name1(self):
-        '''Gets a qualified call name'''
+        '''Gets a qualified call name.'''
         tree = ast.parse('a.b.c.d(x,y)').body[0].value
         name = b_utils.get_call_name(tree, {})
         self.assertEqual('a.b.c.d', name)
 
     def test_get_call_name2(self):
-        '''Gets qualified call name and resolves aliases'''
+        '''Gets qualified call name and resolves aliases.'''
         tree = ast.parse('a.b.c.d(x,y)').body[0].value
 
         name = b_utils.get_call_name(tree, {'a': 'alias.x.y'})
@@ -213,7 +217,7 @@ class UtilTests(testtools.TestCase):
         self.assertEqual('alias.x.y', name)
 
     def test_get_call_name3(self):
-        '''Getting name for a complex call'''
+        '''Getting name for a complex call.'''
         tree = ast.parse('a.list[0](x,y)').body[0].value
         name = b_utils._get_attr_qual_name(tree, {})
         self.assertEqual('', name)
@@ -273,20 +277,29 @@ class UtilTests(testtools.TestCase):
         self.assertEqual('deep value 2', b_utils.deepgetattr(a, 'b.c.d2'))
         self.assertRaises(AttributeError, b_utils.deepgetattr, a.b, 'z')
 
-    def test_lines_with_context(self):
-        res = b_utils.lines_with_context(2, [0, 1, 2, 3, 4], 20, 100)
-        self.assertEqual([-1, 0, 1, 2, 3, 4, 5], res)
-        res = b_utils.lines_with_context(8, [0, 1, 2, 3, 4, 5, 6, 7], 3, 100)
-        self.assertEqual([7, 8], res)
-        res = b_utils.lines_with_context(8, [0, 1, 2, 3, 4, 5, 6, 7], 3, 6)
-        self.assertEqual([2, 3, 4], res)
-        res = b_utils.lines_with_context(1, [0, 1, 2, 3, 4, 5, 6, 7], 3, 6)
-        self.assertEqual([0, 1, 2], res)
-        res = b_utils.lines_with_context(5, [5, 6, 7], 4, 6)
-        self.assertEqual([4, 5, 6, 7], res)
-        res = b_utils.lines_with_context(0, [0], 0, 0)
-        self.assertEqual([], res)
-        self.assertRaises(
-            ValueError, b_utils.lines_with_context,
-            3, [5, 6, 7], 4, 6
-        )
+    def test_parse_ini_file(self):
+
+        tests = [{'content': "[bandit]\nexclude=/abc,/def",
+                  'expected': {'exclude': '/abc,/def'}},
+
+                 {'content': '[Blabla]\nsomething=something',
+                  'expected': None}]
+
+        with tempfile.NamedTemporaryFile('r+') as t:
+            for test in tests:
+                f = open(t.name, 'w')
+                f.write(test['content'])
+                f.close()
+
+                self.assertEqual(b_utils.parse_ini_file(t.name),
+                                 test['expected'])
+
+    def test_check_ast_node_good(self):
+        node = b_utils.check_ast_node("Call")
+        self.assertEqual("Call", node)
+
+    def test_check_ast_node_bad_node(self):
+        self.assertRaises(TypeError, b_utils.check_ast_node, 'Derp')
+
+    def test_check_ast_node_bad_type(self):
+        self.assertRaises(TypeError, b_utils.check_ast_node, 'walk')

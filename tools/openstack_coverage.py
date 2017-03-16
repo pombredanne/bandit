@@ -100,7 +100,7 @@ def coverage_zuul(conf_zuul):
         project_name = project['name']
         for test_type in bandit_tests.keys():
             for test in project.get(test_type, []):
-                if test.endswith('bandit'):
+                if str(test).endswith('bandit'):
                     voting = bandit_jobs.get(test, False)
                     bandit_tests[test_type].add((project_name, voting))
     # output results
@@ -214,7 +214,7 @@ def run_bandit(source_dir):
         fail_results_dir = os.path.abspath('fail_results')
         os.mkdir(fail_results_dir)
     except OSError:
-        print ("Unable to make results directory")
+        print("Unable to make results directory")
 
     os.chdir(source_dir)
 

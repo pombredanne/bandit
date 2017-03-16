@@ -14,10 +14,7 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
-# This is necessary on Python 2.7 because of the local bandit module
-# (bandit.bandit), without from bandit.core will fail since bandit.bandit has
-# no submodule "core"
-from __future__ import absolute_import
+import pbr.version
 
 from bandit.core import config  # noqa
 from bandit.core import context  # noqa
@@ -30,3 +27,5 @@ from bandit.core import utils  # noqa
 from bandit.core.constants import *  # noqa
 from bandit.core.issue import *  # noqa
 from bandit.core.test_properties import *  # noqa
+
+__version__ = pbr.version.VersionInfo('bandit').version_string()
