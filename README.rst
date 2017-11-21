@@ -1,8 +1,8 @@
 Bandit
 ======
 
-.. image:: http://governance.openstack.org/badges/bandit.svg
-    :target: http://governance.openstack.org/reference/tags/index.html
+.. image:: https://governance.openstack.org/badges/bandit.svg
+    :target: https://governance.openstack.org/reference/tags/index.html
     :alt: Bandit team and repository tags
 
 .. image:: https://img.shields.io/pypi/v/bandit.svg
@@ -173,6 +173,8 @@ Usage::
       B320  xml_bad_etree
       B321  ftplib
       B322  input
+      B323  unverified_context
+      B324  hashlib_new_insecure_functions
       B401  import_telnetlib
       B402  import_ftplib
       B403  import_pickle
@@ -387,8 +389,8 @@ Bandit wiki: https://wiki.openstack.org/wiki/Security/Projects/Bandit
 Python AST module documentation: https://docs.python.org/2/library/ast.html
 
 Green Tree Snakes - the missing Python AST docs:
-http://greentreesnakes.readthedocs.org/en/latest/
+https://greentreesnakes.readthedocs.org/en/latest/
 
 Documentation of the various types of AST nodes that Bandit currently covers
 or could be extended to cover:
-http://greentreesnakes.readthedocs.org/en/latest/nodes.html
+https://greentreesnakes.readthedocs.org/en/latest/nodes.html

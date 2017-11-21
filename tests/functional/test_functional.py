@@ -105,7 +105,7 @@ class FunctionalTests(testtools.TestCase):
                 for rank in C.RANKING:
                     label = '{0}.{1}'.format(criteria, rank)
                     expected = 0
-                    if expect['issues'].get(criteria, None).get(rank, None):
+                    if expect['issues'].get(criteria).get(rank):
                         expected = expect['issues'][criteria][rank]
                     self.assertEqual(expected, m['_totals'][label])
 
@@ -120,16 +120,16 @@ class FunctionalTests(testtools.TestCase):
     def test_crypto_md5(self):
         '''Test the `hashlib.md5` example.'''
         expect = {
-            'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 11, 'HIGH': 0},
-            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 11}
+            'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 15, 'HIGH': 0},
+            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 15}
         }
         self.check_example('crypto-md5.py', expect)
 
     def test_ciphers(self):
         '''Test the `Crypto.Cipher` example.'''
         expect = {
-            'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 13},
-            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 13}
+            'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 1, 'HIGH': 13},
+            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 14}
         }
         self.check_example('ciphers.py', expect)
 
@@ -441,8 +441,8 @@ class FunctionalTests(testtools.TestCase):
     def test_jinja2_templating(self):
         '''Test jinja templating for potential XSS bugs.'''
         expect = {
-            'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 4},
-            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 1, 'HIGH': 3}
+            'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 5},
+            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 2, 'HIGH': 3}
         }
         self.check_example('jinja2_templating.py', expect)
 
@@ -689,3 +689,19 @@ class FunctionalTests(testtools.TestCase):
             'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 1}
         }
         self.check_example('input.py', expect)
+
+    def test_unverified_context(self):
+        '''Test for `ssl._create_unverified_context`.'''
+        expect = {
+            'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 1, 'HIGH': 0},
+            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 1}
+        }
+        self.check_example('unverified_context.py', expect)
+
+    def test_hashlib_new_insecure_functions(self):
+        '''Test insecure hash functions created by `hashlib.new`.'''
+        expect = {
+            'SEVERITY': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 5, 'HIGH': 0},
+            'CONFIDENCE': {'UNDEFINED': 0, 'LOW': 0, 'MEDIUM': 0, 'HIGH': 5}
+        }
+        self.check_example('hashlib_new_insecure_functions.py', expect)
